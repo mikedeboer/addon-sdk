@@ -1446,7 +1446,9 @@ function subprocess_unix(options) {
                 break;
             case "done":
                 debugLog("Pipe "+name+" closed\n");
-                if (event.data.data != 0) workerExitCode = event.data.data;
+                // Only save workerExitCode if it's non-zero and 
+                // not the initialization value
+                if (event.data.data > 0) workerExitCode = event.data.data;
                 --readers;
                 if (readers == 0) cleanup();
                 break;

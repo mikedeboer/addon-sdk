@@ -20,7 +20,6 @@ exports['test `exec` callback success'] = function (assert, done) {
 
 exports['test `exec` callback error'] = function (assert, done) {
   exec('not-real-command', { cwd: SDK_ROOT }, function (err, stdout, stderr) {
-    console.log(arguments);
     assert.pass(err instanceof Error, 'error passed in is an Error instance');
     assert.pass(err.code && err.code !== 0, 'error code property on error');
     assert.equal(err.signal, null,
