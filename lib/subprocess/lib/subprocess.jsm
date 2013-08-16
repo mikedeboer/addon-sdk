@@ -1015,7 +1015,9 @@ function subprocess_win32(options) {
     //main
     hChildProcess = popen(cmdStr, workDir, options.arguments, options.environment, child);
 
-    readPipes();
+    setTimeout(function () {
+      readPipes();
+    }, 0);
 
     if (options.stdin) {
        createStdinWriter();
@@ -1057,7 +1059,8 @@ function subprocess_win32(options) {
             while (!done) thread.processNextEvent(true);
 
             return exitCode;
-        }
+        },
+        pid: pid
     };
 }
 
@@ -1562,7 +1565,9 @@ function subprocess_unix(options) {
 
     debugLog("subprocess started; got PID "+pid+"\n");
 
-    readPipes();
+    setTimeout(function () {
+      readPipes();
+    }, 0);
 
     if (options.stdin) {
         createStdinWriter();
@@ -1602,6 +1607,7 @@ function subprocess_unix(options) {
             var rv = kill(pid, (hardKill ? 9: 15));
             cleanup(-1);
             return rv;
-        }
+        },
+        pid: pid
     };
 }
