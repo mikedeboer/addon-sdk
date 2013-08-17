@@ -5,6 +5,7 @@
 const { spawn, exec, execFile } = require('sdk/system/child-process');
 const { env, platform } = require('sdk/system');
 const { isNumber } = require('sdk/lang/type');
+const { emit } = require('sdk/event/core');
 const SDK_ROOT = env.CUDDLEFISH_ROOT;
 const isWindows = platform.toLowerCase().indexOf('win') === 0;
 
@@ -42,7 +43,6 @@ exports.testExecOptionsEnvironment = function (assert, done) {
     assert.ok(!err, 'received `cwd` option');
     assert.ok(/my-value-test/.test(stdout),
       'receives environment option');
-    /* TODO TEST OPTIONS: encoding, timeout, maxBuffer, killSignal */
     done();
   });
 };
@@ -96,10 +96,6 @@ exports.testExecFileCallbackError = function (assert, done) {
   execFile('not-real-command', { cwd: SDK_ROOT }, function (err, stdout, stderr) {
     assert.ok(/NS_ERROR_FILE_UNRECOGNIZED_PATH/.test(err.toString()),
       'error contains error message');
-    assert.equal(err.code, 'NS_ERROR_FILE_UNRECOGNIZED_PATH',
-      'error code is NS_ERROR message');
-    assert.equal(err.signal, null,
-      'null signal property when not manually terminated');
     assert.equal(stdout, '', 'stdout is empty');
     assert.equal(stderr, '', 'stdout is empty');
     done();
@@ -115,7 +111,6 @@ exports.testExecFileOptionsEnvironment = function (assert, done) {
     assert.ok(!err, 'received `cwd` option');
     assert.ok(/my-value-test/.test(stdout),
       'receives environment option');
-    /* TODO TEST OPTIONS: encoding, timeout, maxBuffer, killSignal */
     done();
   });
 };
@@ -165,31 +160,47 @@ exports.testExecFileOptionsMaxBufferLarge = function (assert, done) {
   let count = 0;
   // Creates a buffer of 2000 to stdout, greater than 1024
 
-  let stdoutChild = execFile(getScript('large-out'), ['2000'], { maxBuffer: 50 }, (err, stdout, stderr) => {
+  let stdoutChild = execFile(getScript('large-out'), ['10000'], { maxBuffer: 50 }, (err, stdout, stderr) => {
     assert.ok(/stdout maxBuffer exceeded/.test(err.toString()),
       'error contains stdout maxBuffer exceeded message');
-    assert.equal(err.killed, true, 'error has `killed` property as true');
-    assert.equal(err.code, null, 'error has `code` as null');
-    assert.equal(err.signal, 'SIGTERM',
-      'error has `signal` as SIGTERM by default');
     assert.ok(stdout.length >= 50, 'stdout has full buffer');
     assert.equal(stderr, '', 'stderr is empty');
-    if (++count === 2) complete();
+    if (++count === 6) complete();
   });
 
   // Creates a buffer of 2000 to stderr, greater than 1024
-  let stderrChild = execFile(getScript('large-err'), ['2000'], { maxBuffer: 50 }, (err, stdout, stderr) => {
+  let stderrChild = execFile(getScript('large-err'), ['10000'], { maxBuffer: 50 }, (err, stdout, stderr) => {
     assert.ok(/stderr maxBuffer exceeded/.test(err.toString()),
       'error contains stderr maxBuffer exceeded message');
-    assert.equal(err.killed, true, 'error has `killed` property as true');
-    assert.equal(err.code, null, 'error has `code` as null');
-    assert.equal(err.signal, 'SIGTERM',
-      'error has `signal` as SIGTERM by default');
     assert.ok(stderr.length >= 50, 'stderr has full buffer');
     assert.equal(stdout, '', 'stdout is empty');
-    if (++count === 2) complete();
+    if (++count === 6) complete();
   });
-  function complete () { done(); }
+
+  stdoutChild.on('exit', exitHandler);
+  stdoutChild.on('close', closeHandler);
+  stderrChild.on('exit', exitHandler);
+  stderrChild.on('close', closeHandler);
+      
+  function exitHandler (code, signal) {
+    assert.equal(code, null, 'Exit code is null in exit handler');
+    assert.equal(signal, 'SIGTERM', 'Signal is SIGTERM in exit handler');
+    if (++count === 6) complete();
+  }
+
+  function closeHandler (code, signal) {
+    assert.equal(code, null, 'Exit code is null in close handler');
+    assert.equal(signal, 'SIGTERM', 'Signal is SIGTERM in close handler');
+    if (++count === 6) complete();
+  }
+
+  function complete () { 
+    stdoutChild.off('exit', exitHandler);
+    stdoutChild.off('close', closeHandler);
+    stderrChild.off('exit', exitHandler);
+    stderrChild.off('close', closeHandler);
+    done();
+  }
 };
 
 /**
@@ -199,43 +210,101 @@ exports.testExecFileOptionsMaxBufferLarge = function (assert, done) {
  */
 exports.testExecFileOptionsMaxBufferSmall = function (assert, done) {
   let count = 0;
-  // Creates a buffer of 100 to stdout, less than 1024
+  // Creates a buffer of 60 to stdout, less than 1024
   let stdoutChild = execFile(getScript('large-out'), ['60'], { maxBuffer: 50 }, (err, stdout, stderr) => {
     assert.ok(/stdout maxBuffer exceeded/.test(err.toString()),
       'error contains stdout maxBuffer exceeded message');
-
-    /*
-    // Sometimes the process is killed first, sometimes it ends
-    assert.equal(err.killed, false,
-      'error has `killed` property as false, as proc ended before being killed');
-    */
-    assert.equal(err.code, 0, 'error has `code` as 0, as proc finished');
-    assert.equal(err.signal, null,
-      'error has signal as `null`, as proc finished');
     assert.ok(stdout.length >= 50, 'stdout has full buffer');
     assert.equal(stderr, '', 'stderr is empty');
-    if (++count === 2) complete();
+    if (++count === 6) complete();
   });
 
-  // Creates a buffer of 100 to stderr, less than 1024
+  // Creates a buffer of 60 to stderr, less than 1024
   let stderrChild = execFile(getScript('large-err'), ['60'], { maxBuffer: 50 }, (err, stdout, stderr) => {
     assert.ok(/stderr maxBuffer exceeded/.test(err.toString()),
       'error contains stderr maxBuffer exceeded message');
-    /*
-    // Sometimes the process is killed first, sometimes it ends
-    assert.equal(err.killed, false,
-      'error has `killed` property as false, as proc ended before being killed');
-    */
-    assert.equal(err.code, 0, 'error has `code` as 0, as proc finished');
-    assert.equal(err.signal, null,
-      'error has signal as `null`, as proc finished');
     assert.ok(stderr.length >= 50, 'stderr has full buffer');
     assert.equal(stdout, '', 'stdout is empty');
-    if (++count === 2) complete();
+    if (++count === 6) complete();
   });
 
-  function complete () { done(); }
+  stdoutChild.on('exit', exitHandler);
+  stdoutChild.on('close', closeHandler);
+  stderrChild.on('exit', exitHandler);
+  stderrChild.on('close', closeHandler);
+      
+  function exitHandler (code, signal) {
+    assert.equal(code, 0, 'Exit code is 0 in exit handler');
+    assert.equal(signal, null, 'Signal is null in exit handler');
+    if (++count === 6) complete();
+  }
+
+  function closeHandler (code, signal) {
+    assert.equal(code, 0, 'Exit code is 0 in close handler');
+    assert.equal(signal, null, 'Signal is null in close handler');
+    if (++count === 6) complete();
+  }
+
+  function complete () { 
+    stdoutChild.off('exit', exitHandler);
+    stdoutChild.off('close', closeHandler);
+    stderrChild.off('exit', exitHandler);
+    stderrChild.off('close', closeHandler);
+    done();
+  }
 };
+
+exports.testChildExecFileKillSignal = function (assert, done) {
+  let child = execFile(getScript('wait'), {
+    killSignal: 'beepbeep',
+    timeout: 10
+  }, function (err, stdout, stderr) {
+    assert.equal(err.signal, 'beepbeep', 'correctly used custom killSignal');
+    done();
+  });
+};
+
+exports.testChildProperties = function (assert, done) {
+  let child = spawn(getScript('check-env'), {
+    env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+  });
+
+  assert.ok(child.pid > 0, 'Child has a pid');
+  done();
+
+};
+
+exports.testChildStdinStream = function (assert, done) {
+  let child = spawn(getScript('stdin'), {
+    env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+  });
+
+  child.stdout.on('data', onData);
+  child.on('close', onClose);
+
+  for (let i = 0; i < 1000; i++)
+    emit(child.stdin, 'data', '12345');
+
+  emit(child.stdin, 'end');
+
+  let allData = '';
+
+  function onData (data) {
+    console.log('on data', data);
+    allData += data;
+  }
+
+  function onClose (code, signal) {
+    child.stdout.off('data', onData);
+    child.off('close', onClose);
+    assert.equal(code, 0, 'exited succesfully');
+    assert.equal(signal, null, 'no kill signal given');
+    assert.equal(allData.length, '12345'.length * 1000,
+      'all data processed from stdin');
+    done();
+  }
+};
+
 /*
  * This tests failures when an error is thrown attempting to
  * spawn the process, like an invalid command
@@ -275,7 +344,41 @@ exports.testChildEventsSpawningError= function (assert, done) {
     child.off('close', handleClose);
     done();
   }
-}
+};
+
+exports.testSpawnOptions = function (assert, done) {
+  let envChild = spawn(getScript('check-env'), {
+    env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+  });
+  
+  let cwdChild = spawn(getScript('check-pwd'), { cwd: SDK_ROOT });
+  let count = 0;
+  let envStdout = '';
+  let cwdStdout = '';
+
+  // Do these need to be unbound?
+  envChild.stdout.on('data', data => envStdout += data);
+  cwdChild.stdout.on('data', data => cwdStdout += data);
+
+  envChild.on('close', envClose);
+  cwdChild.on('close', cwdClose);
+
+  function envClose () {
+    assert.equal(envStdout, 'my-value-test\n', 'spawn correctly passed in ENV');
+    if (++count === 2) complete();
+  }
+  
+  function cwdClose () {
+    assert.equal(cwdStdout, SDK_ROOT + '\n', 'spawn correctly passed in cwd');
+    if (++count === 2) complete();
+  }
+
+  function complete () {
+    envChild.off('close', envClose);
+    cwdChild.off('close', cwdClose);
+    done();
+  }
+};
 
 function getScript (name) {
   let path = SDK_ROOT + '/test/fixtures/child-process/'
