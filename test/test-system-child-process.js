@@ -274,7 +274,8 @@ exports.testChildProperties = function (assert, done) {
 
 };
 
-exports.testChildStdinStream = function (assert, done) {
+exports.testChildStdinStreamLarge = function (assert, done) {
+  let REPEAT = 2000;
   let child = spawn(getScript('stdin'), {
     env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
   });
@@ -282,7 +283,7 @@ exports.testChildStdinStream = function (assert, done) {
   child.stdout.on('data', onData);
   child.on('close', onClose);
 
-  for (let i = 0; i < 1000; i++)
+  for (let i = 0; i < REPEAT; i++)
     emit(child.stdin, 'data', '12345');
 
   emit(child.stdin, 'end');
@@ -290,7 +291,6 @@ exports.testChildStdinStream = function (assert, done) {
   let allData = '';
 
   function onData (data) {
-    console.log('on data', data);
     allData += data;
   }
 
@@ -299,12 +299,37 @@ exports.testChildStdinStream = function (assert, done) {
     child.off('close', onClose);
     assert.equal(code, 0, 'exited succesfully');
     assert.equal(signal, null, 'no kill signal given');
-    assert.equal(allData.length, '12345'.length * 1000,
+    assert.equal(allData.length, 1 + '12345'.length * REPEAT,
       'all data processed from stdin');
     done();
   }
 };
 
+exports.testChildStdinStreamSmall = function (assert, done) {
+  let child = spawn(getScript('stdin'), {
+    env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+  });
+
+  child.stdout.on('data', onData);
+  child.on('close', onClose);
+
+  emit(child.stdin, 'data', '12345');
+  emit(child.stdin, 'end');
+
+  let allData = '';
+  function onData (data) {
+    allData += data;
+  }
+
+  function onClose (code, signal) {
+    child.stdout.off('data', onData);
+    child.off('close', onClose);
+    assert.equal(code, 0, 'exited succesfully');
+    assert.equal(signal, null, 'no kill signal given');
+    assert.equal(allData, '12345\n', 'all data processed from stdin');
+    done();
+  }
+};
 /*
  * This tests failures when an error is thrown attempting to
  * spawn the process, like an invalid command
