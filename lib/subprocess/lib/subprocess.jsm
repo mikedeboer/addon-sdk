@@ -366,6 +366,7 @@ function getCommandStr(command) {
     let commandStr = null;
     if (typeof(command) == "string") {
         let file = Cc[NS_LOCAL_FILE].createInstance(Ci.nsIFile);
+
         file.initWithPath(command);
         if (! (file.isExecutable() && file.isFile()))
             throw new Error("File '"+command+"' is not an executable file");
@@ -1059,8 +1060,7 @@ function subprocess_win32(options) {
             while (!done) thread.processNextEvent(true);
 
             return exitCode;
-        },
-        pid: pid
+        }
     };
 }
 
