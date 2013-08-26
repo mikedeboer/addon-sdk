@@ -2,31 +2,39 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+'use strict';
+
 const { spawn, exec, execFile } = require('sdk/system/child-process');
-const { env, platform } = require('sdk/system');
+const { env, platform, pathFor } = require('sdk/system');
 const { isNumber } = require('sdk/lang/type');
+const { after } = require('sdk/test/utils');
+const { defer } = require('sdk/core/promise');
 const { emit } = require('sdk/event/core');
 const { join } = require('sdk/fs/path');
-const SDK_ROOT = env.CUDDLEFISH_ROOT;
-const SCRIPT_DIR = join(SDK_ROOT, 'test/fixtures/child-process/');
+const { writeFile, unlinkSync, existsSync } = require('sdk/io/fs');
+const PROFILE_DIR= pathFor('ProfD');
 const isWindows = platform.toLowerCase().indexOf('win') === 0;
 
 exports.testExecCallbackSuccess = function (assert, done) {
-  exec(isWindows ? 'DIR /L' : 'ls -al', { cwd: SDK_ROOT }, function (err, stdout, stderr) {
-console.log(err.message, stdout);
+  exec(isWindows ? 'DIR /L' : 'ls -al', {
+    cwd: PROFILE_DIR
+  }, function (err, stdout, stderr) {
+    console.log(stdout);
     assert.ok(!err, 'no errors found');
     assert.equal(stderr, '', 'stderr is empty');
-    assert.ok(/license/.test(stdout), 'stdout output of `ls -al` finds files');
-    assert.ok(/readme/.test(stdout), 'stdout output of `ls -al` finds files');
-if(isWindows)
-    assert.ok(/readme/.test(stdout),
-      'passing arguments in `exec` works');
+    assert.ok(/extensions\.ini/.test(stdout), 'stdout output of `ls -al` finds files');
+    if (isWindows)
+      assert.ok(/readme/.test(stdout),
+        'passing arguments in `exec` works');
+    else
+      assert.ok(/d(r[-|w][-|x]){3}/.test(stdout),
+        'passing arguments in `exec` works');
     done();
   });
 };
 
 exports.testExecCallbackError = function (assert, done) {
-  exec('not-real-command', { cwd: SDK_ROOT }, function (err, stdout, stderr) {
+  exec('not-real-command', { cwd: PROFILE_DIR }, function (err, stdout, stderr) {
     assert.ok(/not-real-command/.test(err.toString()),
       'error contains error message');
     assert.ok(err.code && isNumber(err.code), 'non-zero error code property on error');
@@ -39,66 +47,72 @@ exports.testExecCallbackError = function (assert, done) {
 };
 
 exports.testExecOptionsEnvironment = function (assert, done) {
-  exec(getScript('check-env'), {
-    cwd: SDK_ROOT,
-    env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
-  }, function (err, stdout, stderr) {
-    assert.equal(stderr, '', 'stderr is empty');
-    assert.ok(!err, 'received `cwd` option');
-    assert.ok(/my-value-test/.test(stdout),
-      'receives environment option');
-    done();
+  getScript('check-env').then(envScript => {
+    exec(envScript, {
+      cwd: PROFILE_DIR,
+      env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+    }, function (err, stdout, stderr) {
+      assert.equal(stderr, '', 'stderr is empty');
+      assert.ok(!err, 'received `cwd` option');
+      assert.ok(/my-value-test/.test(stdout),
+        'receives environment option');
+      done();
+    });
   });
 };
 
 exports.testExecOptionsTimeout = function (assert, done) {
   let count = 0;
-  let child = exec(getScript('wait'), { timeout: 100 }, (err, stdout, stderr) => {
-    assert.equal(err.killed, true, 'error has `killed` property as true');
-    assert.equal(err.code, null, 'error has `code` as null');
-    assert.equal(err.signal, 'SIGTERM',
-      'error has `signal` as SIGTERM by default');
-    assert.equal(stdout, '', 'stdout is empty');
-    assert.equal(stderr, '', 'stderr is empty');
-    if (++count === 3) complete();
+  getScript('wait').then(script => {
+    let child = exec(script, { timeout: 100 }, (err, stdout, stderr) => {
+      assert.equal(err.killed, true, 'error has `killed` property as true');
+      assert.equal(err.code, null, 'error has `code` as null');
+      assert.equal(err.signal, 'SIGTERM',
+        'error has `signal` as SIGTERM by default');
+      assert.equal(stdout, '', 'stdout is empty');
+      assert.equal(stderr, '', 'stderr is empty');
+      if (++count === 3) complete();
+    });
+
+    function exitHandler (code, signal) {
+      assert.equal(code, null, 'error has `code` as null');
+      assert.equal(signal, 'SIGTERM',
+        'error has `signal` as SIGTERM by default');
+      if (++count === 3) complete();
+    }
+
+    function closeHandler (code, signal) {
+      assert.equal(code, null, 'error has `code` as null');
+      assert.equal(signal, 'SIGTERM',
+        'error has `signal` as SIGTERM by default');
+      if (++count === 3) complete();
+    }
+
+    child.on('exit', exitHandler);
+    child.on('close', closeHandler);
+
+    function complete () {
+      child.off('exit', exitHandler);
+      child.off('close', closeHandler);
+      done();
+    }
   });
-
-  function exitHandler (code, signal) {
-    assert.equal(code, null, 'error has `code` as null');
-    assert.equal(signal, 'SIGTERM',
-      'error has `signal` as SIGTERM by default');
-    if (++count === 3) complete();
-  }
-
-  function closeHandler (code, signal) {
-    assert.equal(code, null, 'error has `code` as null');
-    assert.equal(signal, 'SIGTERM',
-      'error has `signal` as SIGTERM by default');
-    if (++count === 3) complete();
-  }
-
-  child.on('exit', exitHandler);
-  child.on('close', closeHandler);
-
-  function complete () {
-    child.off('exit', exitHandler);
-    child.off('close', closeHandler);
-    done();
-  }
 };
 
 exports.testExecFileCallbackSuccess = function (assert, done) {
-  execFile(getScript('args'), ['--myargs', '-j', '-s'], { cwd: SDK_ROOT }, function (err, stdout, stderr) {
-    assert.ok(!err, 'no errors found');
-    assert.equal(stderr, '', 'stderr is empty');
-    // Trim output since different systems have different new line output
-    assert.equal(stdout.trim(), '--myargs -j -s'.trim(), 'passes in correct arguments');
-    done();
+  getScript('args').then(script => {
+    execFile(script, ['--myargs', '-j', '-s'], { cwd: PROFILE_DIR }, function (err, stdout, stderr) {
+      assert.ok(!err, 'no errors found');
+      assert.equal(stderr, '', 'stderr is empty');
+      // Trim output since different systems have different new line output
+      assert.equal(stdout.trim(), '--myargs -j -s'.trim(), 'passes in correct arguments');
+      done();
+    });
   });
 };
 
 exports.testExecFileCallbackError = function (assert, done) {
-  execFile('not-real-command', { cwd: SDK_ROOT }, function (err, stdout, stderr) {
+  execFile('not-real-command', { cwd: PROFILE_DIR }, function (err, stdout, stderr) {
     assert.ok(/NS_ERROR_FILE_UNRECOGNIZED_PATH/.test(err.toString()),
       'error contains error message');
     assert.equal(stdout, '', 'stdout is empty');
@@ -108,52 +122,56 @@ exports.testExecFileCallbackError = function (assert, done) {
 };
 
 exports.testExecFileOptionsEnvironment = function (assert, done) {
-  execFile(getScript('check-env'), {
-    cwd: SDK_ROOT,
-    env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
-  }, function (err, stdout, stderr) {
-    assert.equal(stderr, '', 'stderr is empty');
-    assert.ok(!err, 'received `cwd` option');
-    assert.ok(/my-value-test/.test(stdout),
-      'receives environment option');
-    done();
+  getScript('check-env').then(script => {
+    execFile(script, {
+      cwd: PROFILE_DIR,
+      env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+    }, function (err, stdout, stderr) {
+      assert.equal(stderr, '', 'stderr is empty');
+      assert.ok(!err, 'received `cwd` option');
+      assert.ok(/my-value-test/.test(stdout),
+        'receives environment option');
+      done();
+    });
   });
 };
 
 exports.testExecFileOptionsTimeout = function (assert, done) {
   let count = 0;
-  let child = execFile(getScript('wait'), { timeout: 100 }, (err, stdout, stderr) => {
-    assert.equal(err.killed, true, 'error has `killed` property as true');
-    assert.equal(err.code, null, 'error has `code` as null');
-    assert.equal(err.signal, 'SIGTERM',
-      'error has `signal` as SIGTERM by default');
-    assert.equal(stdout, '', 'stdout is empty');
-    assert.equal(stderr, '', 'stderr is empty');
-    if (++count === 3) complete();
+  getScript('wait').then(script => {
+    let child = execFile(script, { timeout: 100 }, (err, stdout, stderr) => {
+      assert.equal(err.killed, true, 'error has `killed` property as true');
+      assert.equal(err.code, null, 'error has `code` as null');
+      assert.equal(err.signal, 'SIGTERM',
+        'error has `signal` as SIGTERM by default');
+      assert.equal(stdout, '', 'stdout is empty');
+      assert.equal(stderr, '', 'stderr is empty');
+      if (++count === 3) complete();
+    });
+
+    function exitHandler (code, signal) {
+      assert.equal(code, null, 'error has `code` as null');
+      assert.equal(signal, 'SIGTERM',
+        'error has `signal` as SIGTERM by default');
+      if (++count === 3) complete();
+    }
+
+    function closeHandler (code, signal) {
+      assert.equal(code, null, 'error has `code` as null');
+      assert.equal(signal, 'SIGTERM',
+        'error has `signal` as SIGTERM by default');
+      if (++count === 3) complete();
+    }
+
+    child.on('exit', exitHandler);
+    child.on('close', closeHandler);
+
+    function complete () {
+      child.off('exit', exitHandler);
+      child.off('close', closeHandler);
+      done();
+    }
   });
-
-  function exitHandler (code, signal) {
-    assert.equal(code, null, 'error has `code` as null');
-    assert.equal(signal, 'SIGTERM',
-      'error has `signal` as SIGTERM by default');
-    if (++count === 3) complete();
-  }
-
-  function closeHandler (code, signal) {
-    assert.equal(code, null, 'error has `code` as null');
-    assert.equal(signal, 'SIGTERM',
-      'error has `signal` as SIGTERM by default');
-    if (++count === 3) complete();
-  }
-
-  child.on('exit', exitHandler);
-  child.on('close', closeHandler);
-
-  function complete () {
-    child.off('exit', exitHandler);
-    child.off('close', closeHandler);
-    done();
-  }
 };
 
 /**
@@ -163,30 +181,34 @@ exports.testExecFileOptionsTimeout = function (assert, done) {
  */
 exports.testExecFileOptionsMaxBufferLarge = function (assert, done) {
   let count = 0;
+  let stdoutChild;
+  let stderrChild;
   // Creates a buffer of 2000 to stdout, greater than 1024
-
-  let stdoutChild = execFile(getScript('large-out'), ['10000'], { maxBuffer: 50 }, (err, stdout, stderr) => {
-    assert.ok(/stdout maxBuffer exceeded/.test(err.toString()),
-      'error contains stdout maxBuffer exceeded message');
-    assert.ok(stdout.length >= 50, 'stdout has full buffer');
-    assert.equal(stderr, '', 'stderr is empty');
-    if (++count === 6) complete();
+  getScript('large-out').then(script => {
+    stdoutChild = execFile(script, ['10000'], { maxBuffer: 50 }, (err, stdout, stderr) => {
+      assert.ok(/stdout maxBuffer exceeded/.test(err.toString()),
+        'error contains stdout maxBuffer exceeded message');
+      assert.ok(stdout.length >= 50, 'stdout has full buffer');
+      assert.equal(stderr, '', 'stderr is empty');
+      if (++count === 6) complete();
+    });
+    stdoutChild.on('exit', exitHandler);
+    stdoutChild.on('close', closeHandler);
   });
 
   // Creates a buffer of 2000 to stderr, greater than 1024
-  let stderrChild = execFile(getScript('large-err'), ['10000'], { maxBuffer: 50 }, (err, stdout, stderr) => {
-    assert.ok(/stderr maxBuffer exceeded/.test(err.toString()),
-      'error contains stderr maxBuffer exceeded message');
-    assert.ok(stderr.length >= 50, 'stderr has full buffer');
-    assert.equal(stdout, '', 'stdout is empty');
-    if (++count === 6) complete();
+  getScript('large-err').then(script => {
+    stderrChild = execFile(script, ['10000'], { maxBuffer: 50 }, (err, stdout, stderr) => {
+      assert.ok(/stderr maxBuffer exceeded/.test(err.toString()),
+        'error contains stderr maxBuffer exceeded message');
+      assert.ok(stderr.length >= 50, 'stderr has full buffer');
+      assert.equal(stdout, '', 'stdout is empty');
+      if (++count === 6) complete();
+    });
+    stderrChild.on('exit', exitHandler);
+    stderrChild.on('close', closeHandler);
   });
 
-  stdoutChild.on('exit', exitHandler);
-  stdoutChild.on('close', closeHandler);
-  stderrChild.on('exit', exitHandler);
-  stderrChild.on('close', closeHandler);
-      
   function exitHandler (code, signal) {
     assert.equal(code, null, 'Exit code is null in exit handler');
     assert.equal(signal, 'SIGTERM', 'Signal is SIGTERM in exit handler');
@@ -215,29 +237,35 @@ exports.testExecFileOptionsMaxBufferLarge = function (assert, done) {
  */
 exports.testExecFileOptionsMaxBufferSmall = function (assert, done) {
   let count = 0;
+  let stdoutChild;
+  let stderrChild;
+
   // Creates a buffer of 60 to stdout, less than 1024
-  let stdoutChild = execFile(getScript('large-out'), ['60'], { maxBuffer: 50 }, (err, stdout, stderr) => {
-    assert.ok(/stdout maxBuffer exceeded/.test(err.toString()),
-      'error contains stdout maxBuffer exceeded message');
-    assert.ok(stdout.length >= 50, 'stdout has full buffer');
-    assert.equal(stderr, '', 'stderr is empty');
-    if (++count === 6) complete();
+  getScript('large-out').then(script => {
+    stdoutChild = execFile(script, ['60'], { maxBuffer: 50 }, (err, stdout, stderr) => {
+      assert.ok(/stdout maxBuffer exceeded/.test(err.toString()),
+        'error contains stdout maxBuffer exceeded message');
+      assert.ok(stdout.length >= 50, 'stdout has full buffer');
+      assert.equal(stderr, '', 'stderr is empty');
+      if (++count === 6) complete();
+    });
+    stdoutChild.on('exit', exitHandler);
+    stdoutChild.on('close', closeHandler);
   });
 
   // Creates a buffer of 60 to stderr, less than 1024
-  let stderrChild = execFile(getScript('large-err'), ['60'], { maxBuffer: 50 }, (err, stdout, stderr) => {
-    assert.ok(/stderr maxBuffer exceeded/.test(err.toString()),
-      'error contains stderr maxBuffer exceeded message');
-    assert.ok(stderr.length >= 50, 'stderr has full buffer');
-    assert.equal(stdout, '', 'stdout is empty');
-    if (++count === 6) complete();
+  getScript('large-err').then(script => {
+    stderrChild = execFile(script, ['60'], { maxBuffer: 50 }, (err, stdout, stderr) => {
+      assert.ok(/stderr maxBuffer exceeded/.test(err.toString()),
+        'error contains stderr maxBuffer exceeded message');
+      assert.ok(stderr.length >= 50, 'stderr has full buffer');
+      assert.equal(stdout, '', 'stdout is empty');
+      if (++count === 6) complete();
+    });
+    stderrChild.on('exit', exitHandler);
+    stderrChild.on('close', closeHandler);
   });
 
-  stdoutChild.on('exit', exitHandler);
-  stdoutChild.on('close', closeHandler);
-  stderrChild.on('exit', exitHandler);
-  stderrChild.on('close', closeHandler);
-      
   function exitHandler (code, signal) {
     // Sometimes the buffer limit is hit before the process closes successfully
     // on both OSX/Windows
@@ -276,23 +304,26 @@ exports.testExecFileOptionsMaxBufferSmall = function (assert, done) {
 };
 
 exports.testChildExecFileKillSignal = function (assert, done) {
-  let child = execFile(getScript('wait'), {
-    killSignal: 'beepbeep',
-    timeout: 10
-  }, function (err, stdout, stderr) {
-    assert.equal(err.signal, 'beepbeep', 'correctly used custom killSignal');
-    done();
+  getScript('wait').then(script => {
+    execFile(script, {
+      killSignal: 'beepbeep',
+      timeout: 10
+    }, function (err, stdout, stderr) {
+      assert.equal(err.signal, 'beepbeep', 'correctly used custom killSignal');
+      done();
+    });
   });
 };
 
 exports.testChildProperties = function (assert, done) {
-  let child = spawn(getScript('check-env'), {
-    env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+  getScript('check-env').then(script => {
+    let child = spawn(script, {
+      env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+    });
+
+    assert.ok(child.pid > 0, 'Child has a pid');
+    done();
   });
-
-  assert.ok(child.pid > 0, 'Child has a pid');
-  done();
-
 };
 
 exports.testChildStdinStreamLarge = function (assert, done) {
@@ -310,8 +341,6 @@ exports.testChildStdinStreamLarge = function (assert, done) {
     emit(child.stdin, 'data', '12345');
 
   emit(child.stdin, 'end');
-
-child.on('error', function (x) { console.log('ERROR'+x);})
 
   let allData = '';
 
@@ -404,7 +433,7 @@ exports.testSpawnOptions = function (assert, done) {
   let envChild = spawn(getScript('check-env'),  {
     env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
   });
-  let cwdChild = spawn(getScript('check-pwd'), { cwd: SDK_ROOT });
+  let cwdChild = spawn(getScript('check-pwd'), { cwd: PROFILE_DIR });
   let count = 0;
   let envStdout = '';
   let cwdStdout = '';
@@ -422,7 +451,7 @@ exports.testSpawnOptions = function (assert, done) {
   }
   
   function cwdClose () {
-    assert.equal(cwdStdout.trim(), SDK_ROOT, 'spawn correctly passed in cwd');
+    assert.equal(cwdStdout.trim(), PROFILE_DIR, 'spawn correctly passed in cwd');
     if (++count === 2) complete();
   }
 
@@ -434,8 +463,57 @@ exports.testSpawnOptions = function (assert, done) {
 };
 
 function getScript (name) {
-  let ext = isWindows ? '.bat' : '.sh'
-  return join(SCRIPT_DIR, name + ext);
+  let fileName = name + (isWindows ? '.bat' : '.sh');
+  return createFile(fileName, scripts[fileName]);
 }
+
+let scripts = {
+  'args.sh': '#!/bin/sh\necho $1 $2 $3 $4',
+  'args.bat': '@echo off\necho %1 %2 %3 %4',
+  'check-env.sh': '#!/bin/sh\necho $CHILD_PROCESS_ENV_TEST',
+  'check-env.bat': '@echo off\necho %CHILD_PROCESS_ENV_TEST%',
+  'check-pwd.sh': '#!/bin/sh\necho $PWD',
+  'check-pwd.bat': '@echo off\ncd',
+  'large-err.sh': '#!/bin/sh\n' +
+    'for ((i=0; i<$1; i=i+1)); do echo "E" 1>&2; done',
+  'large-err.bat': '@echo off\n' +
+    'FOR /l %%i in (0,1,%1) DO echo "E" 1>&2',
+  'large-out.sh': '#!/bin/sh\n' +
+    'for ((i=0; i<$1; i=i+1)); do echo "O"; done',
+  'large-out.bat': '@echo off\n' +
+    'FOR /l %%i in (0,1,%1) DO echo "O"',
+  'stdin.sh': '#!/bin/sh\n' +
+    'input=$(< /dev/stdin);\n' +
+    'echo "$input";',
+  'stdin.bat': '@echo off\n' +
+    'setlocal\n' +
+    'for /F "tokens=*" %%a in (\'C:\\Windows\\System32\\more.com\') do (\n' +
+    '  echo %%a\n' +
+    ')\n',
+  'wait.sh': '#!/bin/sh\nsleep 2',
+  'wait.bat': '@echo off\n' +
+    // Use `ping` to an invalid IP address because `timeout` isn't
+    // on all environments? http://stackoverflow.com/a/1672349/1785755
+    'ping 1.1.1.1 -n 1 -w 2000 > nul'
+};
+
+function createFile (name, data) {
+  let { promise, resolve, reject } = defer();
+  writeFile(join(PROFILE_DIR, name), data, function (err) {
+    if (err) reject();
+    else resolve(name);
+  });
+  return promise;
+}
+
+function deleteFile (name) {
+  name = join(PROFILE_DIR, name);
+  console.log('deleting ', name);
+  console.log(existsSync(name));
+  if (existsSync(name))
+    unlinkSync(join(PROFILE_DIR, name));
+}
+
+after(exports, () => Object.keys(scripts).forEach(deleteFile));
 
 require("test").run(exports);
