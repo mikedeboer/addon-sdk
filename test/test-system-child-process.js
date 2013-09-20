@@ -19,7 +19,6 @@ exports.testExecCallbackSuccess = function (assert, done) {
   exec(isWindows ? 'DIR /L' : 'ls -al', {
     cwd: PROFILE_DIR
   }, function (err, stdout, stderr) {
-    console.log(stdout);
     assert.ok(!err, 'no errors found');
     assert.equal(stderr, '', 'stderr is empty');
     assert.ok(/extensions\.ini/.test(stdout), 'stdout output of `ls -al` finds files');
@@ -221,7 +220,7 @@ exports.testExecFileOptionsMaxBufferLarge = function (assert, done) {
     if (++count === 6) complete();
   }
 
-  function complete () { 
+  function complete () {
     stdoutChild.off('exit', exitHandler);
     stdoutChild.off('close', closeHandler);
     stderrChild.off('exit', exitHandler);
@@ -294,7 +293,7 @@ exports.testExecFileOptionsMaxBufferSmall = function (assert, done) {
     if (++count === 6) complete();
   }
 
-  function complete () { 
+  function complete () {
     stdoutChild.off('exit', exitHandler);
     stdoutChild.off('close', closeHandler);
     stderrChild.off('exit', exitHandler);
@@ -328,23 +327,26 @@ exports.testChildProperties = function (assert, done) {
 
 exports.testChildStdinStreamLarge = function (assert, done) {
   let REPEAT = 1700;
-  let child = spawn(getScript('stdin'), {
-    env: {
-      CHILD_PROCESS_ENV_TEST: 'my-value-test'
-    }
+  let allData = '';
+  let child;
+  getScript('stdin').then(script => {
+    child = spawn(script, {
+      env: {
+        CHILD_PROCESS_ENV_TEST: 'my-value-test'
+      }
+    });
+
+    child.stdout.on('data', onData);
+    child.on('close', onClose);
+
+    for (let i = 0; i < REPEAT; i++)
+      emit(child.stdin, 'data', '12345');
+
+    emit(child.stdin, 'end');
   });
 
-  child.stdout.on('data', onData);
-  child.on('close', onClose);
-
-  for (let i = 0; i < REPEAT; i++)
-    emit(child.stdin, 'data', '12345');
-
-  emit(child.stdin, 'end');
-
-  let allData = '';
-
   function onData (data) {
+    console.log('data',data);
     allData += data;
   }
 
@@ -360,21 +362,21 @@ exports.testChildStdinStreamLarge = function (assert, done) {
 };
 
 exports.testChildStdinStreamSmall = function (assert, done) {
-  let child = spawn(getScript('stdin'), {
-    env: {
-      CHILD_PROCESS_ENV_TEST: 'my-value-test'
-    }
+  let allData = '';
+  let child;
+  getScript('stdin').then(script => {
+    child = spawn(script, {
+      env: {
+        CHILD_PROCESS_ENV_TEST: 'my-value-test'
+      }
+    });
+    child.stdout.on('data', onData);
+    child.on('close', onClose);
+
+    emit(child.stdin, 'data', '12345');
+    emit(child.stdin, 'end');
   });
 
-  child.stdout.on('data', onData);
-  child.on('close', onClose);
-
-  emit(child.stdin, 'data', '12345');
-  emit(child.stdin, 'end');
-
-child.stderr.on('data', function (x) { console.log('stderr!!!:', x) })
-
-  let allData = '';
   function onData (data) {
     allData += data;
   }
@@ -430,28 +432,40 @@ exports.testChildEventsSpawningError= function (assert, done) {
 };
 
 exports.testSpawnOptions = function (assert, done) {
-  let envChild = spawn(getScript('check-env'),  {
-    env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
-  });
-  let cwdChild = spawn(getScript('check-pwd'), { cwd: PROFILE_DIR });
   let count = 0;
   let envStdout = '';
   let cwdStdout = '';
+  let checkEnv, checkPwd, envChild, cwdChild;
+  getScript('check-env').then(script => {
+    checkEnv = script;
+    return getScript('check-pwd');
+  }).then(script => {
+    checkPwd = script;
 
-  // Do these need to be unbound?
-  envChild.stdout.on('data', data => envStdout += data);
-  cwdChild.stdout.on('data', data => cwdStdout += data);
+    envChild = spawn(checkEnv, {
+      env: { CHILD_PROCESS_ENV_TEST: 'my-value-test' }
+    });
+    cwdChild = spawn(checkPwd, { cwd: PROFILE_DIR });
 
-  envChild.on('close', envClose);
-  cwdChild.on('close', cwdClose);
+    // Do these need to be unbound?
+    envChild.stdout.on('data', data => envStdout += data);
+    cwdChild.stdout.on('data', data => cwdStdout += data);
+
+    envChild.on('close', envClose);
+    cwdChild.on('close', cwdClose);
+  });
 
   function envClose () {
     assert.equal(envStdout.trim(), 'my-value-test', 'spawn correctly passed in ENV');
     if (++count === 2) complete();
   }
-  
+
   function cwdClose () {
-    assert.equal(cwdStdout.trim(), PROFILE_DIR, 'spawn correctly passed in cwd');
+    // Check for PROFILE_DIR in the output because
+    // some systems resolve symbolic links, and on OSX
+    // /var -> /private/var
+    let isCorrectPath = ~cwdStdout.trim().indexOf(PROFILE_DIR);
+    assert.ok(isCorrectPath, 'spawn correctly passed in cwd');
     if (++count === 2) complete();
   }
 
@@ -499,19 +513,29 @@ let scripts = {
 
 function createFile (name, data) {
   let { promise, resolve, reject } = defer();
-  writeFile(join(PROFILE_DIR, name), data, function (err) {
+  let fileName = join(PROFILE_DIR, name);
+  writeFile(fileName, data, function (err) {
     if (err) reject();
-    else resolve(name);
+    else {
+      makeExecutable(fileName);
+      resolve(fileName);
+    }
   });
   return promise;
 }
 
+// TODO Use fs.chmod once implemented, bug 914606
+function makeExecutable (name) {
+  let { CC } = require('chrome');
+  let nsILocalFile = CC('@mozilla.org/file/local;1', 'nsILocalFile', 'initWithPath');
+  let file = nsILocalFile(name);
+  file.permissions = parseInt('0777', 8);
+}
+
 function deleteFile (name) {
-  name = join(PROFILE_DIR, name);
-  console.log('deleting ', name);
-  console.log(existsSync(name));
-  if (existsSync(name))
-    unlinkSync(join(PROFILE_DIR, name));
+  let file = join(PROFILE_DIR, name);
+  if (existsSync(file))
+    unlinkSync(file);
 }
 
 after(exports, () => Object.keys(scripts).forEach(deleteFile));
