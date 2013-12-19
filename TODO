@@ -1,0 +1,8 @@
+spawn:
+  * setgid
+  * setuid
+  * detached?
+
+* accepts stdin
+
+* windows
