@@ -10,7 +10,7 @@ const WRITE_PERIOD_PREF = "extensions.addon-sdk.simple-storage.writePeriod";
 
 let {Cc,Ci} = require("chrome");
 
-const { Loader, LoaderWithHookedConsole } = require("sdk/test/loader");
+const { Loader } = require("sdk/test/loader");
 const { id } = require("sdk/self");
 
 let storeFile = Cc["@mozilla.org/file/directory_service;1"].
@@ -19,6 +19,7 @@ let storeFile = Cc["@mozilla.org/file/directory_service;1"].
 storeFile.append("jetpack");
 storeFile.append(id);
 storeFile.append("simple-storage");
+file.mkpath(storeFile.path);
 storeFile.append("store.json");
 let storeFilename = storeFile.path;
 
@@ -106,11 +107,28 @@ exports.testEmpty = function (assert) {
   assert.ok(!file.exists(storeFilename), "Store file should not exist");
 };
 
+exports.testStorageDataRecovery = function(assert) {
+  const data = { 
+    a: true,
+    b: [3, 13],
+    c: "guilty!",
+    d: { e: 1, f: 2 }
+  };
+  let stream = file.open(storeFilename, "w");
+  stream.write(JSON.stringify(data));
+  stream.close();
+  let loader = Loader(module);
+  let ss = loader.require("sdk/simple-storage");
+  assert.deepEqual(ss.storage, data, "Recovered data should be the same as written");
+  file.remove(storeFilename);
+  loader.unload();
+}
+
 exports.testMalformed = function (assert) {
   let stream = file.open(storeFilename, "w");
   stream.write("i'm not json");
   stream.close();
-  let { loader, messages } = LoaderWithHookedConsole(module);
+  let loader = Loader(module);
   let ss = loader.require("sdk/simple-storage");
   let empty = true;
   for (let key in ss.storage) {
@@ -118,12 +136,7 @@ exports.testMalformed = function (assert) {
     break;
   }
   assert.ok(empty, "Malformed storage should cause root to be empty");
-
-  assert.equal(messages.length, 1, "Should have seen an console message");
-  assert.equal(messages[0].type, "error", "Should be an error");
-  assert.equal(String(messages[0].msg), "SyntaxError: JSON.parse: unexpected character",
-               "Should be a syntax error");
-
+  file.remove(storeFilename);
   loader.unload();
 };
 
@@ -263,35 +276,35 @@ exports.testChangeInnerArray = function(assert, done) {
     loader = Loader(module);
     ss = loader.require("sdk/simple-storage");
     assert.equal(JSON.stringify(ss.storage),
-                 JSON.stringify(expected), "Should see the expected object");
+                     JSON.stringify(expected), "Should see the expected object");
 
     // Add a property
     ss.storage.x.push(["bar"]);
     expected.x.push(["bar"]);
     manager(loader).jsonStore.onWrite = function (storage) {
       assert.equal(JSON.stringify(ss.storage),
-                   JSON.stringify(expected), "Should see the expected object");
+                       JSON.stringify(expected), "Should see the expected object");
 
       // Modify a property
       ss.storage.y[0] = 42;
       expected.y[0] = 42;
       manager(loader).jsonStore.onWrite = function (storage) {
         assert.equal(JSON.stringify(ss.storage),
-                     JSON.stringify(expected), "Should see the expected object");
+                         JSON.stringify(expected), "Should see the expected object");
 
         // Delete a property
         delete ss.storage.z[1];
         delete expected.z[1];
         manager(loader).jsonStore.onWrite = function (storage) {
           assert.equal(JSON.stringify(ss.storage),
-                       JSON.stringify(expected), "Should see the expected object");
+                           JSON.stringify(expected), "Should see the expected object");
 
           // Modify the new inner-object
           ss.storage.x[2][0] = "baz";
           expected.x[2][0] = "baz";
           manager(loader).jsonStore.onWrite = function (storage) {
             assert.equal(JSON.stringify(ss.storage),
-                         JSON.stringify(expected), "Should see the expected object");
+                             JSON.stringify(expected), "Should see the expected object");
 
             manager(loader).jsonStore.onWrite = function (storage) {
               assert.fail("Nothing should be written since `storage` was not changed.");
@@ -302,7 +315,7 @@ exports.testChangeInnerArray = function(assert, done) {
             loader = Loader(module);
             ss = loader.require("sdk/simple-storage");
             assert.equal(JSON.stringify(ss.storage),
-                         JSON.stringify(expected), "Should see the expected object");
+                             JSON.stringify(expected), "Should see the expected object");
             loader.unload();
             file.remove(storeFilename);
             prefs.reset(WRITE_PERIOD_PREF);
@@ -313,9 +326,13 @@ exports.testChangeInnerArray = function(assert, done) {
     };
   };
 
-  ss.storage = expected;
+  ss.storage = {
+    x: [5, 7],
+    y: [7, 28],
+    z: [6, 2]
+  };
   assert.equal(JSON.stringify(ss.storage),
-               JSON.stringify(expected), "Should see the expected object");
+                   JSON.stringify(expected), "Should see the expected object");
 
   loader.unload();
 };
@@ -348,35 +365,35 @@ exports.testChangeInnerObject = function(assert, done) {
     loader = Loader(module);
     ss = loader.require("sdk/simple-storage");
     assert.equal(JSON.stringify(ss.storage),
-                 JSON.stringify(expected), "Should see the expected object");
+                     JSON.stringify(expected), "Should see the expected object");
 
     // Add a property
     ss.storage.x.g = {foo: "bar"};
     expected.x.g = {foo: "bar"};
     manager(loader).jsonStore.onWrite = function (storage) {
       assert.equal(JSON.stringify(ss.storage),
-                   JSON.stringify(expected), "Should see the expected object");
+                       JSON.stringify(expected), "Should see the expected object");
 
       // Modify a property
       ss.storage.y.c = 42;
       expected.y.c = 42;
       manager(loader).jsonStore.onWrite = function (storage) {
         assert.equal(JSON.stringify(ss.storage),
-                     JSON.stringify(expected), "Should see the expected object");
+                         JSON.stringify(expected), "Should see the expected object");
 
         // Delete a property
         delete ss.storage.z.f;
         delete expected.z.f;
         manager(loader).jsonStore.onWrite = function (storage) {
           assert.equal(JSON.stringify(ss.storage),
-                       JSON.stringify(expected), "Should see the expected object");
+                           JSON.stringify(expected), "Should see the expected object");
 
           // Modify the new inner-object
           ss.storage.x.g.foo = "baz";
           expected.x.g.foo = "baz";
           manager(loader).jsonStore.onWrite = function (storage) {
             assert.equal(JSON.stringify(ss.storage),
-                         JSON.stringify(expected), "Should see the expected object");
+                             JSON.stringify(expected), "Should see the expected object");
 
             manager(loader).jsonStore.onWrite = function (storage) {
               assert.fail("Nothing should be written since `storage` was not changed.");
@@ -387,7 +404,7 @@ exports.testChangeInnerObject = function(assert, done) {
             loader = Loader(module);
             ss = loader.require("sdk/simple-storage");
             assert.equal(JSON.stringify(ss.storage),
-                         JSON.stringify(expected), "Should see the expected object");
+                             JSON.stringify(expected), "Should see the expected object");
             loader.unload();
             file.remove(storeFilename);
             prefs.reset(WRITE_PERIOD_PREF);
@@ -398,9 +415,22 @@ exports.testChangeInnerObject = function(assert, done) {
     };
   };
 
-  ss.storage = expected;
+  ss.storage = {
+    x: {
+      a: 5,
+      b: 7
+    },
+    y: {
+      c: 7,
+      d: 28
+    },
+    z: {
+      e: 6,
+      f: 2
+    }
+  };
   assert.equal(JSON.stringify(ss.storage),
-               JSON.stringify(expected), "Should see the expected object");
+                   JSON.stringify(expected), "Should see the expected object");
 
   loader.unload();
 };

@@ -2,13 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
 
 const tabs = require("sdk/tabs"); // From addon-kit
 const windowUtils = require("sdk/deprecated/window-utils");
 const { getTabForWindow } = require('sdk/tabs/helpers');
 const app = require("sdk/system/xul-app");
 const { viewFor } = require("sdk/view/core");
-const { getTabId } = require("sdk/tabs/utils");
+const { modelFor } = require("sdk/model/core");
+const { getTabId, isTab } = require("sdk/tabs/utils");
+const { defer } = require("sdk/lang/functional");
 
 // The primary test tab
 var primaryTab;
@@ -139,16 +142,34 @@ exports["test behavior on close"] = function(assert, done) {
 };
 
 exports["test viewFor(tab)"] = (assert, done) => {
-  tabs.once("open", tab => {
+  // Note we defer handlers as length collection is updated after
+  // handler is invoked, so if test is finished before counnts are
+  // updated wrong length will show up in followup tests.
+  tabs.once("open", defer(tab => {
     const view = viewFor(tab);
     assert.ok(view, "view is returned");
     assert.equal(getTabId(view), tab.id, "tab has a same id");
 
-    tab.close();
-    done();
-  });
+    tab.close(defer(done));
+  }));
 
   tabs.open({ url: "about:mozilla" });
-}
+};
 
-require("test").run(exports);
+
+exports["test modelFor(xulTab)"] = (assert, done) => {
+  tabs.open({
+    url: "about:mozilla",
+    onReady: tab => {
+      const view = viewFor(tab);
+      assert.ok(view, "view is returned");
+      assert.ok(isTab(view), "view is underlaying tab");
+      assert.equal(getTabId(view), tab.id, "tab has a same id");
+      assert.equal(modelFor(view), tab, "modelFor(view) is SDK tab");
+
+      tab.close(defer(done));
+    }
+  });
+};
+
+require("sdk/test").run(exports);
